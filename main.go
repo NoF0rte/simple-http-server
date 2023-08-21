@@ -29,7 +29,7 @@ func main() {
 	handler := handlers.CombinedLoggingHandler(os.Stdout, http.FileServer(http.Dir(directory)))
 
 	if enableCors {
-		handler = cors.Default().Handler(handler)
+		handler = cors.AllowAll().Handler(handler)
 	}
 
 	http.ListenAndServe(listenAddress, handler)
