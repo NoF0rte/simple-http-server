@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/handlers"
@@ -29,7 +30,17 @@ func main() {
 	flag.StringVar(&directory, "d", ".", "The directory where the files are served")
 	flag.BoolVar(&enableCors, "cors", false, "Enable CORS")
 	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging. Logs out the request headers and body")
-	flag.BoolVar(&redirect, "redirect", false, "Enable dynamic redirect. Format: /redir/<required_method>/<base64_redirect> or /redir?method=<required_method>&redir=<redirect>")
+	flag.BoolVar(&redirect, "redirect", false, `Enable dynamic redirect.
+Format: /redir/<required_method>/<base64_redirect>
+	/redir/<required_method>/<status_code>/<base64_redirect>
+	/redir?method=<required_method>&status=<status_code>&redir=<redirect>
+
+required_method: The method required to activate the redirect. Use * for any method.
+status_code: The desired redirect status code to use. Must be in the range of 300-399. Status code 307 is the default.
+
+Examples: https://localhost:8000/redir/POST/aHR0cHM6Ly9nb29nbGUuY29t // Redirects POST requests to https://google.com
+	  https://localhost:8000/redir/*/303/aHR0cHM6Ly9nb29nbGUuY29t // Redirects any request to https://google.com using the 303 status code
+	  https://localhost:8000/redir?method=*&status=302&redir=https://google.com // Redirects any request to https://google.com using the 302 status code`)
 	flag.Parse()
 
 	listenAddress := fmt.Sprintf("%s:%s", listenAddress, port)
@@ -38,6 +49,7 @@ func main() {
 	var handler http.Handler
 	if redirect {
 		log.Println("Setting up the redirection handler.")
+		http.Handle("/redir", handlers.CombinedLoggingHandler(os.Stdout, http.HandlerFunc(redirHandler)))
 		http.Handle("/redir/", handlers.CombinedLoggingHandler(os.Stdout, http.HandlerFunc(redirHandler)))
 	}
 
@@ -85,17 +97,36 @@ func verboseHandler(handler http.Handler) http.Handler {
 }
 
 func redirHandler(w http.ResponseWriter, r *http.Request) {
-	trimmed := r.URL.Path[len("/redir/"):]
+	trimmed := r.URL.Path[len("/redir"):]
+	trimmed = strings.TrimPrefix(trimmed, "/")
 
+	status := http.StatusTemporaryRedirect
 	method := ""
 	redirect := ""
 	if r.URL.Query().Has("redir") {
 		method = r.URL.Query().Get("method")
 		redirect = r.URL.Query().Get("redir")
+
+		s := r.URL.Query().Get("status")
+		if s != "" {
+			i, err := strconv.Atoi(s)
+			if err == nil && i >= 300 && i <= 399 { // Only use the status code if it is in the 300's
+				status = i
+			}
+		}
 	} else {
+		var statusStr string
+		var parts string
 		var encoded string
-		method, encoded, _ = strings.Cut(trimmed, "/")
-		encoded, _, _ = strings.Cut(encoded, "/")
+		method, parts, _ = strings.Cut(trimmed, "/")
+		statusStr, encoded, _ = strings.Cut(parts, "/")
+
+		if encoded == "" { // This means they didn't specify a status code to use
+			encoded = statusStr
+			statusStr = ""
+		} else {
+			encoded, _, _ = strings.Cut(encoded, "/")
+		}
 
 		bytes, err := base64.URLEncoding.DecodeString(encoded)
 		if err != nil {
@@ -105,6 +136,13 @@ func redirHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		redirect = string(bytes)
+
+		if statusStr != "" {
+			i, err := strconv.Atoi(statusStr)
+			if err == nil && i >= 300 && i <= 399 { // Only use the status code if it is in the 300's
+				status = i
+			}
+		}
 	}
 
 	if method != "*" && !strings.EqualFold(method, r.Method) {
@@ -114,5 +152,5 @@ func redirHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[+] Redirecting %s to %s", r.RemoteAddr, redirect)
-	http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, redirect, status)
 }
