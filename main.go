@@ -49,8 +49,14 @@ Examples: https://localhost:8000/redir/POST/aHR0cHM6Ly9nb29nbGUuY29t // Redirect
 	var handler http.Handler
 	if redirect {
 		log.Println("Setting up the redirection handler.")
-		http.Handle("/redir", handlers.CombinedLoggingHandler(os.Stdout, http.HandlerFunc(redirHandler)))
-		http.Handle("/redir/", handlers.CombinedLoggingHandler(os.Stdout, http.HandlerFunc(redirHandler)))
+
+		redir := handlers.CombinedLoggingHandler(os.Stdout, http.HandlerFunc(redirHandler))
+		if verbose {
+			redir = verboseHandler(redir)
+		}
+
+		http.Handle("/redir", redir)
+		http.Handle("/redir/", redir)
 	}
 
 	fmt.Printf("[+] Serving files at: %s\n", directory)
